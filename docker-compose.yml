@@ -1,0 +1,15 @@
+
+services:
+  incidencias_app:
+    # Indica a Docker Compose que construya la imagen usando el Dockerfile en el directorio actual
+    build: . 
+    
+    # Mapea el puerto del contenedor (8501, donde corre Streamlit) a un puerto del host (80, el puerto web estándar)
+    ports:
+      - "80:8501" 
+      
+    # Configura el contenedor para que se reinicie automáticamente si falla o si se reinicia el servidor.
+    restart: always 
+    
+    # Asigna un nombre fácil de usar al contenedor
+    container_name: incidencias_streamlit_prod

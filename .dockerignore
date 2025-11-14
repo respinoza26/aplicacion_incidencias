@@ -5,10 +5,3 @@ __pycache__
 .git
 .gitignore
 Dockerfile
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.DS_Store
-.env
-.git

@@ -27,3 +27,13 @@ EXPOSE 8501
 
 # Comando de ejecución de la aplicación Streamlit
 CMD ["streamlit", "run", "app_optimized.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+
+
+# # Construir la imagen
+# docker build -t mi-app-streamlit .
+
+# # Crear el contenedor (se iniciará automáticamente)
+# docker run -d --name mi_app_streamlit -p 8501:8501 --restart unless-stopped mi-app-streamlit
+
+# # Si es fuera de horario o fin de semana, detenlo manualmente
+# docker stop mi_app_streamlit

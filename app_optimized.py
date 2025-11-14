@@ -759,120 +759,6 @@ class OptimizedDataManager:
         
         return self._tarifa_lookup.get((categoria_norm, convenio_norm), 0.0)
 
-    
-    def get_precio_incidencia(self, motivo: str, categoria: str, cod_convenio: str) -> float:
-        """
-        Obtiene el precio de incidencia según motivo, categoría y convenio.
-        
-        Parámetros:
-        - motivo (str): Motivo de la incidencia (ej: "Sustitución", "Refuerzo")
-        - categoria (str): Categoría del empleado
-        - cod_convenio (str): Código de convenio
-        
-        Retorna:
-        - float: Precio por hora de la incidencia o 0.0 si no existe
-        """
-        # ============================================================
-        # 1. INICIALIZAR LOOKUPS SI NO EXISTEN
-        # ============================================================
-        if not hasattr(self, '_motivos_lookup') or self._motivos_lookup is None:
-            self._motivos_lookup = {}
-            self._precio_incidencia_lookup = {}
-            
-            try:
-                # Cargar cuenta_motivos
-                df_motivos = _load_single_sheet(self.file_path, 'cuenta_motivos', self.file_hash)
-                
-                if not df_motivos.empty and 'Motivo' in df_motivos.columns and 'desc_cuenta' in df_motivos.columns:
-                    for _, row in df_motivos.iterrows():
-                        motivo_key = str(row['Motivo']).strip()
-                        desc_cuenta = str(row['desc_cuenta']).strip().upper() if pd.notna(row['desc_cuenta']) else ""
-                        
-                        if motivo_key and desc_cuenta:
-                            self._motivos_lookup[motivo_key] = desc_cuenta
-            except Exception as e:
-                pass  # Si falla, el lookup quedará vacío
-            
-            try:
-                # Cargar tarifas_incidencias
-                df_tarifas = _load_single_sheet(self.file_path, 'tarifas_incidencias', self.file_hash, usecols="A:D")
-                
-                if not df_tarifas.empty:
-                    df_tarifas.columns = [str(c).strip() for c in df_tarifas.columns]
-                    
-                    # Buscar columna de precio (que NO sea nocturnidad)
-                    precio_col = None
-                    for col in df_tarifas.columns:
-                        col_lower = col.lower()
-                        if ('precio' in col_lower or 'tarifa' in col_lower) and 'noct' not in col_lower:
-                            precio_col = col
-                            break
-                    
-                    # Si no encontramos columna específica, intentar con índice
-                    if precio_col is None and len(df_tarifas.columns) >= 3:
-                        precio_col = df_tarifas.columns[2]  # Tercera columna
-                    
-                    if precio_col and 'Descripción' in df_tarifas.columns and 'cod_convenio' in df_tarifas.columns:
-                        for _, row in df_tarifas.iterrows():
-                            try:
-                                desc_norm = str(row['Descripción']).strip().upper()
-                                
-                                # Normalizar convenio
-                                conv_raw = row['cod_convenio']
-                                if pd.notna(conv_raw):
-                                    try:
-                                        conv_norm = str(int(float(conv_raw)))
-                                    except:
-                                        conv_norm = str(conv_raw).strip()
-                                else:
-                                    continue
-                                
-                                precio = float(row[precio_col]) if pd.notna(row[precio_col]) else 0.0
-                                
-                                if desc_norm and conv_norm:
-                                    self._precio_incidencia_lookup[(desc_norm, conv_norm)] = precio
-                            except:
-                                continue
-            except Exception as e:
-                pass  # Si falla, el lookup quedará vacío
-        
-        # ============================================================
-        # 2. OBTENER CATEGORÍA DE TARIFA
-        # ============================================================
-        motivo_norm = str(motivo).strip()
-        
-        # Intentar obtener categoría desde mapeo de motivos
-        categoria_tarifa = self._motivos_lookup.get(motivo_norm, "")
-        
-        # Si no hay mapeo, usar categoría del empleado
-        if not categoria_tarifa:
-            categoria_tarifa = str(categoria).strip().upper() if pd.notna(categoria) else ""
-        
-        # Remover prefijos de una letra (ej: "h ASL" → "ASL")
-        if categoria_tarifa and ' ' in categoria_tarifa:
-            parts = categoria_tarifa.split(' ', 1)
-            if len(parts) == 2 and len(parts[0]) == 1:
-                categoria_tarifa = parts[1]
-        
-        # ============================================================
-        # 3. NORMALIZAR CONVENIO
-        # ============================================================
-        if pd.notna(cod_convenio) and cod_convenio != '':
-            try:
-                convenio_norm = str(int(float(cod_convenio)))
-            except:
-                convenio_norm = str(cod_convenio).strip()
-        else:
-            convenio_norm = ""
-        
-        # ============================================================
-        # 4. BUSCAR Y RETORNAR PRECIO
-        # ============================================================
-        if not categoria_tarifa or not convenio_norm:
-            return 0.0
-        
-        return self._precio_incidencia_lookup.get((categoria_tarifa, convenio_norm), 0.0)
-
     def get_empleado_info(self, nombre_empleado: str) -> Dict:
         """
         Obtiene información completa de un empleado.
@@ -975,41 +861,13 @@ class OptimizedDataManager:
     def get_centros_crown_with_names(self) -> List[str]:
         """
         Retorna centros con formato 'Código - Nombre'.
+        
+        Retorna:
+        - List[str]: Lista formateada para display
         """        
         if self.centros_lookup_df.empty:
             return [""]
         return [""] + sorted(self.centros_lookup_df['nombre_centro_display'].tolist())
-    
-    # ========== PEGA AQUÍ EL NUEVO MÉTODO ==========
-    def get_all_centros_codes(self) -> List[str]:
-        """
-        Retorna lista de todos los códigos de centros (sin incluir string vacío).
-        
-        Retorna:
-        - List[str]: Lista de códigos de centros como strings
-        
-        Uso: Para validación en carga masiva
-        """
-        return [str(centro) for centro in (self._centros_list or [])]
-
-    def get_centro_info(self, codigo_centro: str) -> Dict:
-        """Obtiene información completa de un centro por su código."""
-        if self.centros_lookup_df.empty:
-            return {}
-        
-        codigo_norm = str(codigo_centro).strip()
-        match = self.centros_lookup_df[
-            self.centros_lookup_df['cod_centro_preferente'] == codigo_norm
-        ]
-        
-        if match.empty:
-            return {}
-        
-        centro_info = match.iloc[0].to_dict()
-        
-        # ... resto del código del método ...
-        
-        return centro_info
 
 # =============================================================================
 # TABLA OPTIMIZADA CON PAGINACIÓN
@@ -1026,44 +884,6 @@ class OptimizedTablaIncidencias:
     - data_manager: Referencia al gestor de datos
     """
     ROWS_PER_PAGE = 50
-    # ✅ NUEVAS CONSTANTES - AGREGAR AQUÍ:
-    
-    # Columnas para carga masiva
-    COLUMNAS_CARGA_MASIVA_OBLIGATORIAS = [
-        'Trabajador',
-        'Fecha',
-        'Motivo',
-        'Código Crown Destino',
-        'Incidencia_horas',
-        'Observaciones'
-    ]
-    
-    COLUMNAS_CARGA_MASIVA_OPCIONALES = [
-        'Facturable',
-        'Nocturnidad_horas',
-        'Traslados_total'
-    ]
-    
-    @property
-    def COLUMNAS_CARGA_MASIVA_TODAS(self):
-        """Lista completa de columnas para plantillas."""
-        return self.COLUMNAS_CARGA_MASIVA_OBLIGATORIAS + self.COLUMNAS_CARGA_MASIVA_OPCIONALES
-    
-    # Opciones de motivos
-    MOTIVOS_VALIDOS = [
-        "Absentismo",
-        "Refuerzo", 
-        "Eventos",
-        "Festivos y Fines de Semana",
-        "Permiso retribuido",
-        "Puesto pendiente de cubrir",
-        "Formación",
-        "Otros",
-        "Nocturnidad"
-    ]
-    
-    # Opciones de facturable
-    OPCIONES_FACTURABLE = ["", "Sí", "No"]
 
     def __init__(self, data_manager: OptimizedDataManager):
         """
@@ -1096,10 +916,9 @@ class OptimizedTablaIncidencias:
         incidencias = st.session_state.incidencias
 
         # TABS para diferentes métodos de entrada
-        tab1, tab2 , tab3 = st.tabs([
+        tab1, tab2 = st.tabs([
             "🎯 Por Centro",
-            "👤 Por Trabajador",
-            "📤 Carga Masiva"
+            "👤 Por Trabajador"
         ])
         
         with tab1:
@@ -1107,487 +926,12 @@ class OptimizedTablaIncidencias:
         
         with tab2:
             self._render_method_by_trabajador(selected_jefe)
-        
-        # ========== NUEVO TAB3 ==========
-        with tab3:
-            self._render_method_carga_masiva(selected_jefe)  # ← NUEVO MÉTODO
 
         if incidencias:
             st.markdown("---")
             self._render_main_table_paginated(incidencias, selected_jefe)
         else:
             st.info("💡 No hay incidencias registradas. Usa las pestañas superiores para agregar.")
-    
-    def _render_method_carga_masiva(self, selected_jefe: str):
-        """
-        Tab 3: Carga masiva desde archivo Excel/CSV.
-        
-        Funcionalidad:
-        - Subir archivo Excel/CSV con múltiples incidencias
-        - Validar formato y datos
-        - Procesar y agregar todas las incidencias de una vez
-        
-        Parámetros:
-        - selected_jefe (str): Supervisor actual
-        """
-        st.subheader("📤 Carga Masiva de Incidencias")
-        st.info("💡 **Ideal para:** Cargar muchas incidencias de una vez desde un archivo Excel o CSV")
-        
-        # =================================================================
-        # 1. SECCIÓN DE PLANTILLAS DESCARGABLES
-        # =================================================================
-        st.markdown("### 📋 Paso 1: Descarga la Plantilla")
-        
-        col_download1, col_download2 = st.columns(2)
-        
-        with col_download1:
-            st.markdown("**📄 Plantilla Vacía**")
-            st.caption("Para rellenar con tus datos")
-            
-            # Generar plantilla vacía
-            plantilla_vacia = self._generar_plantilla_vacia()
-            
-            st.download_button(
-                label="⬇️ Descargar Plantilla Vacía",
-                data=plantilla_vacia,
-                file_name="Plantilla_Carga_Masiva_VACIA.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                help="Descarga una plantilla vacía con las columnas correctas"
-            )
-        
-        with col_download2:
-            st.markdown("**📊 Plantilla con Ejemplos**")
-            st.caption("Para ver el formato correcto")
-            
-            # Generar plantilla con ejemplos
-            plantilla_ejemplos = self._generar_plantilla_con_ejemplos()
-            
-            st.download_button(
-                label="⬇️ Descargar con Ejemplos",
-                data=plantilla_ejemplos,
-                file_name="Plantilla_Carga_Masiva_CON_EJEMPLOS.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                help="Descarga una plantilla con datos de ejemplo"
-            )
-        
-        st.markdown("---")
-        
-        # =================================================================
-        # 2. SECCIÓN DE CARGA DE ARCHIVO
-        # =================================================================
-        st.markdown("### 📁 Paso 2: Sube tu Archivo")
-        
-        uploaded_file = st.file_uploader(
-            "Selecciona un archivo Excel (.xlsx, .xls) o CSV (.csv)",
-            type=['xlsx', 'xls', 'csv'],
-            help="El archivo debe contener las columnas obligatorias: Trabajador, Fecha, Motivo, Código Crown Destino, Incidencia_horas, Observaciones",
-            key="bulk_upload_file"
-        )
-        
-        if uploaded_file is not None:
-            st.success(f"✅ Archivo cargado: **{uploaded_file.name}**")
-            
-            # Mostrar información del archivo
-            col_info1, col_info2, col_info3 = st.columns(3)
-            with col_info1:
-                file_size = uploaded_file.size / 1024  # KB
-                st.metric("Tamaño", f"{file_size:.1f} KB")
-            with col_info2:
-                file_type = uploaded_file.name.split('.')[-1].upper()
-                st.metric("Formato", file_type)
-            with col_info3:
-                st.metric("Estado", "✅ Listo")
-            
-            st.markdown("---")
-            
-            # =================================================================
-            # 3. VISTA PREVIA Y VALIDACIÓN
-            # =================================================================
-            st.markdown("### 👁️ Paso 3: Vista Previa y Validación")
-            
-            try:
-                # Leer el archivo según el tipo
-                if uploaded_file.name.endswith('.csv'):
-                    df_uploaded = pd.read_csv(uploaded_file)
-                else:
-                    df_uploaded = pd.read_excel(uploaded_file)
-                
-                # Mostrar información básica
-                st.write(f"📊 **Total de filas:** {len(df_uploaded)}")
-                st.write(f"📋 **Columnas encontradas:** {', '.join(df_uploaded.columns.tolist())}")
-                
-                # Vista previa de las primeras filas
-                with st.expander("👀 Ver primeras 5 filas del archivo", expanded=True):
-                    st.dataframe(df_uploaded.head(), use_container_width=True)
-                
-                st.markdown("---")
-                
-                # =================================================================
-                # 4. BOTÓN DE PROCESAMIENTO
-                # =================================================================
-                st.markdown("### ⚙️ Paso 4: Procesar Incidencias")
-                
-                col_process, col_cancel = st.columns([3, 1])
-                
-                with col_process:
-                    if st.button("🚀 Procesar y Agregar Incidencias", 
-                                type="primary", 
-                                use_container_width=True):
-                        
-                        with st.spinner("⏳ Validando datos..."):
-                            # ==========================================
-                            # VALIDACIÓN
-                            # ==========================================
-                            es_valido, mensajes, df_validado = self._validar_datos_carga_masiva(df_uploaded)
-                            
-                            # Mostrar mensajes de validación
-                            if mensajes:
-                                for msg in mensajes:
-                                    if msg.startswith("❌"):
-                                        st.error(msg)
-                                    elif msg.startswith("⚠️"):
-                                        st.warning(msg)
-                            
-                            # Si no es válido, detener el proceso
-                            if not es_valido:
-                                st.error("❌ No se puede procesar el archivo debido a errores de validación")
-                                st.stop()
-                        
-                        # ==========================================
-                        # PROCESAMIENTO
-                        # ==========================================
-                        if es_valido:
-                            with st.spinner("⏳ Procesando incidencias..."):
-                                
-                                # Verificar que hay jefe e imputación seleccionados
-                                if not selected_jefe:
-                                    st.error("❌ Debes seleccionar un Jefe de Operaciones antes de procesar")
-                                    st.stop()
-                                
-                                if not st.session_state.selected_imputacion:
-                                    st.error("❌ Debes seleccionar una Imputación de Nómina antes de procesar")
-                                    st.stop()
-                                
-                                # Procesar las incidencias
-                                creadas, errores_count, errores_detallados = self._procesar_carga_masiva(
-                                    df_validado,
-                                    selected_jefe,
-                                    st.session_state.selected_imputacion
-                                )
-                                
-                                # ==========================================
-                                # MOSTRAR RESULTADOS
-                                # ==========================================
-                                st.markdown("---")
-                                st.markdown("### 📊 Resultados del Procesamiento")
-                                
-                                col_res1, col_res2, col_res3 = st.columns(3)
-                                
-                                with col_res1:
-                                    st.metric(
-                                        "✅ Creadas",
-                                        creadas,
-                                        delta=f"{creadas} nuevas"
-                                    )
-                                
-                                with col_res2:
-                                    st.metric(
-                                        "❌ Con Errores",
-                                        errores_count,
-                                        delta=f"{errores_count} fallos" if errores_count > 0 else None,
-                                        delta_color="inverse"
-                                    )
-                                
-                                with col_res3:
-                                    total = creadas + errores_count
-                                    porcentaje = (creadas / total * 100) if total > 0 else 0
-                                    st.metric(
-                                        "📈 Éxito",
-                                        f"{porcentaje:.1f}%"
-                                    )
-                                
-                                # Mostrar errores detallados si los hay
-                                if errores_detallados:
-                                    with st.expander(f"⚠️ Ver {len(errores_detallados)} errores detallados"):
-                                        for error in errores_detallados:
-                                            st.text(error)
-                                
-                                # Mensaje final
-                                if creadas > 0:
-                                    st.success(f"🎉 ¡Proceso completado! Se agregaron {creadas} incidencias correctamente")
-                                    st.info("👇 Revisa la tabla de incidencias más abajo y edita si es necesario")
-                                else:
-                                    st.error("❌ No se pudo crear ninguna incidencia. Revisa los errores anteriores")
-                
-                with col_cancel:
-                    if st.button("❌ Cancelar", use_container_width=True):
-                        st.rerun()
-            
-            except Exception as e:
-                st.error(f"❌ Error al leer el archivo: {str(e)}")
-                st.warning("⚠️ Asegúrate de que el archivo esté en el formato correcto y no esté corrupto.")
-        
-        else:
-            # Mensaje cuando no hay archivo cargado
-            st.info("👆 Sube un archivo para comenzar el proceso de carga masiva")
-            
-            # Mostrar formato esperado
-            with st.expander("ℹ️ ¿Qué formato debe tener mi archivo?"):
-                st.markdown("""
-                **Columnas OBLIGATORIAS:**
-                - `Trabajador` - Nombre completo en MAYÚSCULAS
-                - `Fecha` - Formato DD/MM/AAAA o 01-Enero
-                - `Motivo` - Debe coincidir con maestros
-                - `Código Crown Destino` - Centro destino (5 dígitos)
-                - `Incidencia_horas` - Horas trabajadas (número)
-                - `Observaciones` - Notas adicionales
-                
-                **Columnas OPCIONALES:**
-                - `Facturable` - "Sí" o "No" (por defecto: "Sí")
-                - `Nocturnidad_horas` - Horas nocturnas (por defecto: 0)
-                - `Traslados_total` - Horas de traslado (por defecto: 0)
-                - `Empresa Destino` - Se calcula automáticamente si no se proporciona
-                - `Incidencia_precio` - Se calcula automáticamente si no se proporciona
-                """)
-
-    def _validar_datos_carga_masiva(self, df: pd.DataFrame) -> Tuple[bool, List[str], pd.DataFrame]:
-        """
-        Valida el DataFrame cargado antes de procesar.
-        
-        Parámetros:
-        - df (pd.DataFrame): DataFrame con los datos del archivo
-        
-        Retorna:
-        - Tuple[bool, List[str], pd.DataFrame]:
-            * bool: True si es válido, False si hay errores críticos
-            * List[str]: Lista de mensajes de error/advertencia
-            * pd.DataFrame: DataFrame limpio y validado
-        """
-        errores = []
-        advertencias = []
-        
-        # Usar constante de clase
-        columnas_faltantes = [
-            col for col in self.COLUMNAS_CARGA_MASIVA_OBLIGATORIAS 
-            if col not in df.columns
-        ]
-        
-        if columnas_faltantes:
-            errores.append(f"❌ Faltan columnas obligatorias: {', '.join(columnas_faltantes)}")
-            return False, errores, df
-        
-        # ============================================================
-        # 2. LIMPIAR Y NORMALIZAR DATOS
-        # ============================================================
-        df_clean = df.copy()
-        
-        # Limpiar espacios en blanco de todas las columnas de texto
-        for col in df_clean.columns:
-            if df_clean[col].dtype == 'object':
-                df_clean[col] = df_clean[col].astype(str).str.strip()
-        
-        # Convertir trabajadores a MAYÚSCULAS
-        df_clean['Trabajador'] = df_clean['Trabajador'].str.upper()
-        
-        # Convertir Código Crown Destino a string sin decimales
-        df_clean['Código Crown Destino'] = df_clean['Código Crown Destino'].apply(
-            lambda x: str(int(float(x))) if pd.notna(x) and str(x).replace('.', '').replace('-', '').isdigit() else str(x)
-        )
-        
-        # ============================================================
-        # 3. VALIDAR FILAS VACÍAS
-        # ============================================================
-        filas_iniciales = len(df_clean)
-        df_clean = df_clean.dropna(subset=self.COLUMNAS_CARGA_MASIVA_OBLIGATORIAS, how='all')
-        filas_eliminadas = filas_iniciales - len(df_clean)
-        
-        if filas_eliminadas > 0:
-            advertencias.append(f"⚠️ Se eliminaron {filas_eliminadas} filas completamente vacías")
-        
-        if len(df_clean) == 0:
-            errores.append("❌ No hay datos válidos para procesar")
-            return False, errores, df_clean
-        
-        # ============================================================
-        # 4. VALIDAR TRABAJADORES EXISTEN
-        # ============================================================
-        trabajadores_validos = self.data_manager.get_all_employees()
-        trabajadores_archivo = df_clean['Trabajador'].unique()
-        trabajadores_no_encontrados = [t for t in trabajadores_archivo if t not in trabajadores_validos]
-        
-        if trabajadores_no_encontrados:
-            errores.append(f"❌ Trabajadores NO encontrados en maestro: {', '.join(trabajadores_no_encontrados[:5])}")
-            if len(trabajadores_no_encontrados) > 5:
-                errores.append(f"   ... y {len(trabajadores_no_encontrados) - 5} más")
-        
-        # ============================================================
-        # 5. VALIDAR CÓDIGOS CROWN DESTINO EXISTEN
-        # ============================================================
-        centros_validos = self.data_manager.get_all_centros_codes()
-        centros_archivo = df_clean['Código Crown Destino'].unique()
-        centros_no_encontrados = [c for c in centros_archivo if c not in centros_validos]
-        
-        if centros_no_encontrados:
-            errores.append(f"❌ Códigos Crown Destino NO encontrados: {', '.join(centros_no_encontrados[:5])}")
-            if len(centros_no_encontrados) > 5:
-                errores.append(f"   ... y {len(centros_no_encontrados) - 5} más")
-        
-        # ============================================================
-        # 6. VALIDAR TIPOS DE DATOS NUMÉRICOS
-        # ============================================================
-        try:
-            df_clean['Incidencia_horas'] = pd.to_numeric(df_clean['Incidencia_horas'], errors='coerce')
-            
-            if 'Nocturnidad_horas' in df_clean.columns:
-                df_clean['Nocturnidad_horas'] = pd.to_numeric(df_clean['Nocturnidad_horas'], errors='coerce').fillna(0)
-            else:
-                df_clean['Nocturnidad_horas'] = 0.0
-            
-            if 'Traslados_total' in df_clean.columns:
-                df_clean['Traslados_total'] = pd.to_numeric(df_clean['Traslados_total'], errors='coerce').fillna(0)
-            else:
-                df_clean['Traslados_total'] = 0.0
-            
-            # Verificar valores negativos
-            if (df_clean['Incidencia_horas'] < 0).any():
-                errores.append("❌ Hay valores negativos en Incidencia_horas")
-            
-            # Verificar valores nulos
-            if df_clean['Incidencia_horas'].isna().any():
-                errores.append("❌ Hay valores no numéricos en Incidencia_horas")
-        
-        except Exception as e:
-            errores.append(f"❌ Error al validar columnas numéricas: {str(e)}")
-        
-        # ============================================================
-        # 7. AGREGAR VALORES POR DEFECTO PARA COLUMNAS OPCIONALES
-        # ============================================================
-        if 'Facturable' not in df_clean.columns:
-            df_clean['Facturable'] = 'Sí'
-        else:
-            df_clean['Facturable'] = df_clean['Facturable'].fillna('Sí')
-        
-        # ============================================================
-        # 8. RESULTADO FINAL
-        # ============================================================
-        todos_los_mensajes = errores + advertencias
-        es_valido = len(errores) == 0
-        
-        return es_valido, todos_los_mensajes, df_clean
-
-
-    def _procesar_carga_masiva(self, df_validado, selected_jefe, imputacion_nomina):
-        """
-        Procesa DataFrame validado y crea incidencias.
-        
-        CAMBIO: NO calcular incidencia_precio aquí.
-        Dejar que la tabla lo calcule automáticamente como en flujo manual.
-        """
-        incidencias_creadas = 0
-        incidencias_error = 0
-        errores_detallados = []
-        
-        for idx, row in df_validado.iterrows():
-            try:
-                # ========================================
-                # 1. EXTRAER DATOS DE LA FILA
-                # ========================================
-                trabajador = row['Trabajador']
-                fecha = row['Fecha']
-                motivo = row['Motivo']
-                crown_destino = str(row['Código Crown Destino'])
-                incidencia_horas = float(row['Incidencia_horas'])
-                observaciones = row['Observaciones']
-                facturable = row.get('Facturable', 'Sí')
-                nocturnidad_horas = float(row.get('Nocturnidad_horas', 0))
-                traslados_total = float(row.get('Traslados_total', 0))
-                
-                # ========================================
-                # 2. OBTENER INFO DEL TRABAJADOR
-                # ========================================
-                empleado_info = self.data_manager.get_empleado_info(trabajador)
-                
-                if not empleado_info:
-                    errores_detallados.append(
-                        f"Fila {idx + 2}: Trabajador '{trabajador}' no encontrado"
-                    )
-                    incidencias_error += 1
-                    continue
-                
-                # Extraer datos del empleado
-                categoria = empleado_info.get('cat_empleado', '')
-                cod_reg_convenio = empleado_info.get('cod_reg_convenio', '')
-                centro_preferente = str(empleado_info.get('centro_preferente', ''))
-                nombre_jefe_ope = empleado_info.get('nombre_jefe_ope', '')
-                coste_hora = float(empleado_info.get('coste_hora', 0.0) or 0.0)
-                servicio = empleado_info.get('servicio', '')
-                
-                # ========================================
-                # 3. ✅ NO CALCULAR PRECIO - DEJARLO EN 0.0
-                # ========================================
-                # La tabla editable lo calculará automáticamente
-                # igual que cuando se agregan incidencias manualmente
-                incidencia_precio = 0.0
-                
-                # ========================================
-                # 4. OBTENER INFO CENTRO DESTINO
-                # ========================================
-                centro_destino_info = self.data_manager.get_centro_info(crown_destino)
-                
-                if centro_destino_info:
-                    nombre_crown_destino = centro_destino_info.get('desc_centro_preferente', '')
-                    empresa_destino = centro_destino_info.get('nombre_empresa', '')
-                    
-                    # Fallback: inferir por código si no existe
-                    if not empresa_destino:
-                        if crown_destino.startswith('11'):
-                            empresa_destino = 'ALGADI'
-                        elif crown_destino.startswith('12'):
-                            empresa_destino = 'SMI'
-                        elif crown_destino.startswith('13'):
-                            empresa_destino = 'DISTEGSA'
-                else:
-                    nombre_crown_destino = ""
-                    empresa_destino = ""
-                
-                # ========================================
-                # 5. CREAR INCIDENCIA (igual que flujo manual)
-                # ========================================
-                nueva_incidencia = Incidencia(
-                    trabajador=trabajador,
-                    imputacion_nomina=imputacion_nomina,
-                    facturable=facturable,
-                    motivo=motivo,
-                    codigo_crown_origen=centro_preferente,
-                    codigo_crown_destino=crown_destino,
-                    empresa_destino=empresa_destino,
-                    incidencia_horas=incidencia_horas,
-                    incidencia_precio=incidencia_precio,  # 0.0 - se calculará en tabla
-                    nocturnidad_horas=nocturnidad_horas,
-                    traslados_total=traslados_total,
-                    coste_hora=coste_hora,
-                    fecha=fecha,
-                    observaciones=observaciones,
-                    centro_preferente=centro_preferente,
-                    nombre_jefe_ope=nombre_jefe_ope,
-                    categoria=categoria,
-                    servicio=servicio,
-                    cod_reg_convenio=cod_reg_convenio,
-                    nombre_crown_destino=nombre_crown_destino,
-                )
-                
-                st.session_state.incidencias.append(nueva_incidencia)
-                incidencias_creadas += 1
-                
-            except Exception as e:
-                errores_detallados.append(
-                    f"Fila {idx + 2}: Error - {str(e)}"
-                )
-                incidencias_error += 1
-        
-        return incidencias_creadas, incidencias_error, errores_detallados
 
     def _render_method_by_centro(self, selected_jefe: str):
         """
@@ -1788,115 +1132,26 @@ class OptimizedTablaIncidencias:
 
     def _add_incidencia(self, nombre_trabajador: str, num_rows: int, selected_jefe: str, crown_origen: str, crown_destino: str) -> None:
         """
-        Añade una o más incidencias para un trabajador con todos sus datos.
+        Añade una o más incidencias para un trabajador.
         
         Parámetros:
         - nombre_trabajador (str): Nombre del empleado
         - num_rows (int): Número de filas a crear
         - selected_jefe (str): Supervisor
-        - crown_origen (str): Centro origen (puede estar vacío, se obtiene del empleado)
+        - crown_origen (str): Centro origen
         - crown_destino (str): Centro destino
-        
-        Proceso:
-        1. Obtiene info del empleado (categoría, convenio, centro preferente, etc.)
-        2. Obtiene info del centro destino (nombre, empresa)
-        3. Crea las incidencias con todos los campos prellenados
-        4. Agrega a st.session_state.incidencias
-        """
-        # ========================================================================
-        # 1. VALIDACIONES INICIALES
-        # ========================================================================
+        """        
         if not nombre_trabajador:
             st.warning("⚠️ Por favor, selecciona un trabajador.")
             return
-        
-        # ========================================================================
-        # 2. OBTENER INFORMACIÓN DEL EMPLEADO
-        # ========================================================================
-        empleado_info = self.data_manager.get_empleado_info(nombre_trabajador)
-        
-        if not empleado_info:
-            st.error(f"❌ No se encontró información del trabajador: {nombre_trabajador}")
-            return
-        
-        # Extraer datos del empleado
-        trabajador = empleado_info.get('nombre_empleado', '')
-        categoria = empleado_info.get('cat_empleado', '')
-        servicio = empleado_info.get('servicio', '')
-        cod_reg_convenio = empleado_info.get('cod_reg_convenio', '')
-        nombre_jefe_ope = empleado_info.get('nombre_jefe_ope', 'N/A')
-        coste_hora = float(empleado_info.get('coste_hora', 0.0) or 0.0)
-        
-        # Centro preferente (origen del trabajador)
-        centro_pref = empleado_info.get('centro_preferente', '')
-        centro_preferente = str(centro_pref) if centro_pref else ""
-        codigo_crown_origen = str(centro_pref) if centro_pref else ""
-        
-        # ========================================================================
-        # 3. DETERMINAR CENTRO DESTINO
-        # ========================================================================
-        if crown_destino:
-            codigo_crown_destino = str(crown_destino)
-        else:
-            # Si no hay destino especificado, usar el origen
-            codigo_crown_destino = codigo_crown_origen
-        
-        # ========================================================================
-        # 4. OBTENER INFORMACIÓN DEL CENTRO DESTINO
-        # ========================================================================
-        df_centros_lookup = self.data_manager.centros_lookup_df
-        match = df_centros_lookup[
-            df_centros_lookup['cod_centro_preferente'] == str(codigo_crown_destino)
-        ]
-        
-        if not match.empty:
-            nombre_crown_destino = match['desc_centro_preferente'].iloc[0]
-        else:
-            nombre_crown_destino = ""
-        
-        # Obtener empresa destino (si existe en los datos)
-        centro_destino_info = self.data_manager.get_centro_info(codigo_crown_destino)
-        if centro_destino_info:
-            empresa_destino = centro_destino_info.get('nombre_empresa', '')
-        else:
-            empresa_destino = ""
-        
-        # ========================================================================
-        # 5. CREAR LAS INCIDENCIAS
-        # ========================================================================
+
         incidents = st.session_state.incidencias
-        
+
         for _ in range(num_rows):
-            # Crear incidencia con todos los campos prellenados
-            incidencia = Incidencia(
-                trabajador=trabajador,
-                imputacion_nomina=st.session_state.selected_imputacion,
-                categoria=categoria,
-                servicio=servicio,
-                centro_preferente=centro_preferente,
-                codigo_crown_origen=codigo_crown_origen,
-                codigo_crown_destino=codigo_crown_destino,
-                empresa_destino=empresa_destino,
-                cod_reg_convenio=cod_reg_convenio,
-                nombre_jefe_ope=nombre_jefe_ope,
-                coste_hora=coste_hora,
-                nombre_crown_destino=nombre_crown_destino,
-                # Los siguientes se dejarán en 0.0 o "" para que el usuario los complete:
-                facturable="",
-                motivo="",
-                incidencia_horas=0.0,
-                incidencia_precio=0.0,
-                nocturnidad_horas=0.0,
-                traslados_total=0.0,
-                fecha="",
-                observaciones=""
-            )
-            
+            incidencia = Incidencia(imputacion_nomina=st.session_state.selected_imputacion)
+            self._actualizar_datos_empleado(incidencia, nombre_trabajador, selected_jefe, crown_origen, crown_destino)
             incidents.append(incidencia)
-        
-        # ========================================================================
-        # 6. ACTUALIZAR SESSION STATE Y NOTIFICAR
-        # ========================================================================
+
         st.session_state.incidencias = incidents
         st.success(f"✅ Agregadas {num_rows} fila(s) para {nombre_trabajador}")
     
@@ -1914,18 +1169,67 @@ class OptimizedTablaIncidencias:
             st.warning("⚠️ No hay empleados para agregar.")
             return
         
-        # Usar _add_incidencia que ahora hace todo el trabajo
+        incidents = st.session_state.incidencias
+        new_incidents = []
         for empleado in empleados:
-            self._add_incidencia(
-                nombre_trabajador=empleado,
-                num_rows=1,
-                selected_jefe=selected_jefe,
-                crown_origen=crown_origen,
-                crown_destino=crown_destino
-            )
+            incidencia = Incidencia(imputacion_nomina=st.session_state.selected_imputacion)
+            self._actualizar_datos_empleado(incidencia, empleado, selected_jefe, crown_origen, crown_destino)
+            new_incidents.append(incidencia)
+
+        incidents.extend(new_incidents)
+        st.session_state.incidencias = incidents
+        st.success(f"✅ Agregados {len(new_incidents)} trabajadores del centro {crown_origen}")
+
+    def _actualizar_datos_empleado(self, incidencia: Incidencia, nombre_trabajador: str, jefe: str, crown_origen: str, crown_destino: str):
+        """
+        Actualiza datos de incidencia con info del empleado.
         
-        st.success(f"✅ Agregados {len(empleados)} trabajadores del centro {crown_origen}")
-    
+        Parámetros:
+        - incidencia (Incidencia): Objeto a actualizar
+        - nombre_trabajador (str): Nombre del empleado
+        - jefe (str): Supervisor
+        - crown_origen (str): Centro origen
+        - crown_destino (str): Centro destino
+        
+        Actualiza:
+        - Categoría, servicio, convenio
+        - Centro preferente
+        - Coste hora
+        - Nombre del centro destino
+        """        
+        if nombre_trabajador:
+            empleado_info = self.data_manager.get_empleado_info(nombre_trabajador)
+            if empleado_info:
+                incidencia.trabajador = empleado_info.get('nombre_empleado', '')
+                incidencia.categoria = empleado_info.get('cat_empleado', '')
+                incidencia.servicio = empleado_info.get('servicio', '')
+                
+                centro_pref = empleado_info.get('centro_preferente', '')
+                incidencia.centro_preferente = str(centro_pref) if centro_pref else ""
+                
+                incidencia.codigo_crown_origen = str(centro_pref) if centro_pref else ""
+                incidencia.cod_reg_convenio = empleado_info.get('cod_reg_convenio', '')
+                incidencia.nombre_jefe_ope = empleado_info.get('nombre_jefe_ope', 'N/A')
+                
+                if crown_destino:
+                    incidencia.codigo_crown_destino = str(crown_destino)
+                    
+                    df_centros_lookup = self.data_manager.centros_lookup_df
+                    match = df_centros_lookup[df_centros_lookup['cod_centro_preferente'] == str(crown_destino)]
+                    if not match.empty:
+                        incidencia.nombre_crown_destino = match['desc_centro_preferente'].iloc[0]
+                    else:
+                        incidencia.nombre_crown_destino = ""
+                else:
+                    incidencia.codigo_crown_destino = incidencia.codigo_crown_origen
+                    df_centros_lookup = self.data_manager.centros_lookup_df
+                    match = df_centros_lookup[df_centros_lookup['cod_centro_preferente'] == incidencia.codigo_crown_origen]
+                    if not match.empty:
+                        incidencia.nombre_crown_destino = match['desc_centro_preferente'].iloc[0]
+                    else:
+                        incidencia.nombre_crown_destino = ""
+
+                incidencia.coste_hora = float(empleado_info.get('coste_hora', 0.0) or 0.0)
 
     def _render_main_table_paginated(self, incidencias: List[Incidencia], selected_jefe: str) -> None:
         """
@@ -2021,8 +1325,8 @@ class OptimizedTablaIncidencias:
         column_config = {
             "Borrar": st.column_config.CheckboxColumn("Borrar", help="Selecciona las filas a borrar", default=False),
             "Trabajador": st.column_config.SelectboxColumn("Trabajador", options=[""] + todos_empleados, required=True, width="medium"),
-            "Facturable": st.column_config.SelectboxColumn("Facturable", options=self.OPCIONES_FACTURABLE, required=True, width="small"),
-            "Motivo": st.column_config.SelectboxColumn("Motivo", options=self.MOTIVOS_VALIDOS, required=True, width="medium"),
+            "Facturable": st.column_config.SelectboxColumn("Facturable", options=["", "Sí", "No"], required=True, width="small"),
+            "Motivo": st.column_config.SelectboxColumn("Motivo", options=["Absentismo", "Refuerzo", "Eventos", "Festivos y Fines de Semana", "Permiso retribuido", "Puesto pendiente de cubrir","Formación","Otros","Nocturnidad"], required=True, width="medium"),
             "Código Crown Origen": st.column_config.TextColumn("Crown Origen", disabled=True, help="Centro preferente del trabajador"),
             "Código Crown Destino": st.column_config.SelectboxColumn("Crown Destino", options=centros_crown, required=True),
             "Nombre Crown Destino": st.column_config.TextColumn("Nombre Crown Destino", disabled=True, width="medium"),
@@ -2263,7 +1567,7 @@ class OptimizedTablaIncidencias:
                 # Si cambió el trabajador, actualizar sus datos
                 if new_inc.trabajador and new_inc.trabajador != inc.trabajador:
                     current_destino = new_inc.codigo_crown_destino
-                    self._add_incidencia(new_inc, new_inc.trabajador, st.session_state.selected_jefe, "", current_destino)
+                    self._actualizar_datos_empleado(new_inc, new_inc.trabajador, st.session_state.selected_jefe, "", current_destino)
                     changes_made = True
 
                 new_incidents.append(new_inc)
@@ -2289,171 +1593,6 @@ class OptimizedTablaIncidencias:
             st.info("ℹ️ No se detectaron cambios para guardar.")
         st.rerun()
 
-
-    def _generar_plantilla_vacia(self) -> bytes:
-        """
-        Genera una plantilla Excel vacía para carga masiva.
-        
-        Retorna:
-        - bytes: Archivo Excel en memoria
-        """
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-    
-        # Usar constante de clase
-        columnas = self.COLUMNAS_CARGA_MASIVA_TODAS
-        
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Plantilla Carga Masiva"
-        
-        # Estilos
-        azul_header = PatternFill(start_color="1670B7", end_color="1670B7", fill_type="solid")
-        font_header = Font(bold=True, color="FFFFFF", size=11)
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        
-        # Agregar encabezados
-        for col_idx, col_name in enumerate(columnas, start=1):
-            cell = ws.cell(row=1, column=col_idx, value=col_name)
-            cell.font = font_header
-            cell.fill = azul_header
-            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            cell.border = thin_border
-        
-        # Ajustar anchos
-        anchos = {
-            "Trabajador": 30,
-            "Fecha": 12,
-            "Motivo": 15,
-            "Código Crown Destino": 20,
-            "Incidencia_horas": 17,
-            "Observaciones": 35,
-            "Facturable": 12,
-            "Nocturnidad_horas": 18,
-            "Traslados_total": 15
-        }
-        
-        for col_idx, col_name in enumerate(columnas, start=1):
-            column_letter = ws.cell(row=1, column=col_idx).column_letter
-            ws.column_dimensions[column_letter].width = anchos.get(col_name, 15)
-        
-        ws.freeze_panes = "A2"
-        
-        # Guardar en memoria
-        excel_buffer = io.BytesIO()
-        wb.save(excel_buffer)
-        excel_buffer.seek(0)
-        return excel_buffer.getvalue()
-
-
-    def _generar_plantilla_con_ejemplos(self) -> bytes:
-        """
-        Genera una plantilla Excel con datos de ejemplo.
-        
-        Retorna:
-        - bytes: Archivo Excel en memoria
-        """
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-        
-        # Datos de ejemplo
-        datos_ejemplo = [
-            {
-                "Trabajador": "MARÍA LÓPEZ SÁNCHEZ",
-                "Fecha": "15/01/2025",
-                "Motivo": "Sustitución",
-                "Código Crown Destino": "12345",
-                "Incidencia_horas": 8.5,
-                "Observaciones": "Cobertura por baja médica",
-                "Facturable": "Sí",
-                "Nocturnidad_horas": 2.0,
-                "Traslados_total": 1.5
-            },
-            {
-                "Trabajador": "CARLOS GARCÍA RUIZ",
-                "Fecha": "16/01/2025",
-                "Motivo": "Refuerzo",
-                "Código Crown Destino": "67890",
-                "Incidencia_horas": 4.0,
-                "Observaciones": "Evento especial fin de semana",
-                "Facturable": "No",
-                "Nocturnidad_horas": 0,
-                "Traslados_total": 0
-            },
-            {
-                "Trabajador": "JUAN PÉREZ GARCÍA",
-                "Fecha": "17/01/2025",
-                "Motivo": "Sustitución",
-                "Código Crown Destino": "12345",
-                "Incidencia_horas": 7.5,
-                "Observaciones": "Cobertura urgente",
-                "Facturable": "Sí",
-                "Nocturnidad_horas": 1.5,
-                "Traslados_total": 2.0
-            }
-        ]
-        
-        columnas = self.COLUMNAS_CARGA_MASIVA_TODAS
-        
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Ejemplos Carga Masiva"
-        
-        # Estilos
-        azul_header = PatternFill(start_color="1670B7", end_color="1670B7", fill_type="solid")
-        font_header = Font(bold=True, color="FFFFFF", size=11)
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        
-        # Encabezados
-        for col_idx, col_name in enumerate(columnas, start=1):
-            cell = ws.cell(row=1, column=col_idx, value=col_name)
-            cell.font = font_header
-            cell.fill = azul_header
-            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            cell.border = thin_border
-        
-        # Datos de ejemplo
-        for row_idx, ejemplo in enumerate(datos_ejemplo, start=2):
-            for col_idx, col_name in enumerate(columnas, start=1):
-                cell = ws.cell(row=row_idx, column=col_idx, value=ejemplo[col_name])
-                cell.border = thin_border
-        
-        # Ajustar anchos
-        anchos = {
-            "Trabajador": 30,
-            "Fecha": 12,
-            "Motivo": 15,
-            "Código Crown Destino": 20,
-            "Incidencia_horas": 17,
-            "Observaciones": 35,
-            "Facturable": 12,
-            "Nocturnidad_horas": 18,
-            "Traslados_total": 15
-        }
-        
-        for col_idx, col_name in enumerate(columnas, start=1):
-            column_letter = ws.cell(row=1, column=col_idx).column_letter
-            ws.column_dimensions[column_letter].width = anchos.get(col_name, 15)
-        
-        ws.freeze_panes = "A2"
-        
-        # Guardar en memoria
-        excel_buffer = io.BytesIO()
-        wb.save(excel_buffer)
-        excel_buffer.seek(0)
-        return excel_buffer.getvalue()
 
 # =============================================================================
 # EXPORT MANAGER OPTIMIZADO
@@ -2913,7 +2052,63 @@ class OptimizedIncidenciasApp:
 # =============================================================================
 
 if __name__ == "__main__":
+    
+    ## 🔄 Flujo de Datos
 
+#     '''
+#         1. INICIO
+#         ├── Carga maestros.xlsx
+#         ├── Construye cachés (tarifas, empleados)
+#         └── Inicializa session_state
+
+#         2. ENTRADA DE DATOS
+#         ├── Método 1: Por Centro
+#         │   ├── Selecciona origen/destino
+#         │   └── Agrega todos o individual
+#         └── Método 2: Por Trabajador
+#             ├── Selecciona empleado
+#             └── Define N destinos
+
+#         3. EDICIÓN
+#         ├── Tabla paginada (50 filas)
+#         ├── Edición inline
+#         ├── Validación automática
+#         └── Guardado en session_state
+
+#         4. EXPORTACIÓN
+#         ├── Filtra incidencias válidas
+#         ├── Calcula tarifas nocturnidad
+#         ├── Añade columnas calculadas
+#         └── Genera Excel descargable
+#     '''
+
+#     ## 📊 Estructura de Datos Clave
+
+#     ### Archivo maestros.xlsx
+#     '''
+#     Hojas requeridas:
+#     ├── Centros
+#     │   ├── cod_centro_preferente
+#     │   ├── desc_centro_preferente
+#     │   ├── nombre_jefe_ope
+#     │   └── fecha_baja_centro
+#     │
+#     ├── Trabajadores
+#     │   ├── nombre_empleado
+#     │   ├── centro_preferente
+#     │   ├── cat_empleado
+#     │   ├── cod_reg_convenio
+#     │   └── coste_hora
+#     │
+#     ├── tarifas_incidencias
+#     │   ├── Descripción (categoría)
+#     │   ├── cod_convenio
+#     │   └── tarifa_noct
+#     │
+#     └── cuenta_motivos
+#         ├── Motivo
+#         └── desc_cuenta
+# '''
     _add_logo_and_css()
     app = OptimizedIncidenciasApp()
     app.run()
